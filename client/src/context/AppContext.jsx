@@ -1,6 +1,9 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { dummyChats, dummyUserData } from "../assets/assets";
+import axios from "axios";
+import toast from "react-hot-toast";
+
+axios.defaults.baseURL = import.meta.env.VITE_SERVER_URL;
 
 const AppContext = createContext();
 AppContext.displayName = "AppContext";
@@ -9,19 +12,74 @@ export const AppContextProvider = ({ children }) => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [chats, setChats] = useState([]);
-  const [selectedChat, setSelectedChat] = useState(null); // ✅ fixed casing
+  const [selectedChat, setSelectedChat] = useState(null);
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "light");
+  const [token, setToken] = useState(localStorage.getItem("token") || null);
+  const [loadingUser, setLoadingUser] = useState(true);
+
+  // 🔹 Add Axios interceptor to automatically attach Bearer token
+  useEffect(() => {
+    const requestInterceptor = axios.interceptors.request.use(
+      (config) => {
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+        return config;
+      },
+      (error) => Promise.reject(error)
+    );
+
+    return () => {
+      axios.interceptors.request.eject(requestInterceptor);
+    };
+  }, [token]);
 
   const fetchUser = async () => {
-    setUser(dummyUserData);
+    try {
+      const { data } = await axios.get("/api/user/data"); // interceptor adds token
+      if (data.success) {
+        setUser(data.user);
+      } else {
+        toast.error(data.message);
+      }
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setLoadingUser(false);
+    }
+  };
+
+  const createNewChat = async () => {
+    try {
+      if (!user) return toast("Login to create a new chat");
+      navigate("/");
+      await axios.get("/api/chat/create"); // interceptor adds token
+      await fetchUserChats();
+    } catch (error) {
+      toast.error(error.message);
+    }
   };
 
   const fetchUserChats = async () => {
-    setChats(dummyChats);
-    setSelectedChat(dummyChats[0]); // ✅ fixed casing
+    try {
+      const { data } = await axios.get("/api/chat/get"); // interceptor adds token
+      if (data.success) {
+        setChats(data.chats);
+        if (data.chats.length === 0) {
+          await createNewChat();
+          return fetchUserChats();
+        } else {
+          setSelectedChat(data.chats[0]);
+        }
+      } else {
+        toast.error(data.message);
+      }
+    } catch (error) {
+      toast.error(error.message);
+    }
   };
 
-  // ✅ Theme toggle effect
+  // Theme toggle effect
   useEffect(() => {
     if (theme === "dark") {
       document.documentElement.classList.add("dark");
@@ -36,13 +94,18 @@ export const AppContextProvider = ({ children }) => {
       fetchUserChats();
     } else {
       setChats([]);
-      setSelectedChat(null); // ✅ fixed casing
+      setSelectedChat(null);
     }
   }, [user]);
 
   useEffect(() => {
-    fetchUser();
-  }, []);
+    if (token) {
+      fetchUser();
+    } else {
+      setUser(null);
+      setLoadingUser(false);
+    }
+  }, [token]);
 
   const value = {
     navigate,
@@ -51,17 +114,19 @@ export const AppContextProvider = ({ children }) => {
     fetchUser,
     chats,
     setChats,
-    selectedChat,    // ✅ fixed casing
-    setSelectedChat, // ✅ fixed casing
+    selectedChat,
+    setSelectedChat,
     theme,
     setTheme,
+    createNewChat,
+    loadingUser,
+    fetchUserChats,
+    token,
+    setToken,
+    axios,
   };
 
-  return (
-    <AppContext.Provider value={value}>
-      {children}
-    </AppContext.Provider>
-  );
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
 export const useAppContext = () => useContext(AppContext);
